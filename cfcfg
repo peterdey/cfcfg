@@ -1,0 +1,231 @@
+#!/bin/sh
+# cfcfg - Produce a succinct kernel configuration comparison
+
+# Copyright (C) 2023 Paul Gover
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+ME="${0##*/}"
+set -e   # Abort on errors - will leave some temp files
+
+### Help and documentation:
+doHelp() {
+cat << endHelp
+cfcfg [-c] [-m] [-u] [-w nnn] oldconfigfile newconfigfiile
+
+Succinctly list differences between two Linux kernel configurations.
+-c      Retain colours when output redirected to file or pipe
+-m      Treat modules as built-in, to eliminate non-functional differences
+-u      Retain unset items in the comparison
+-w nnn  Set width of comparison output passed to diff, default 80
+
+See man cfcfg for full details
+endHelp
+exit
+}
+
+### Pipe filters using gawk
+# BEWARE: the gawk program parameters are passed as '-commented strings over several lines
+# so the gawk command line almost invariable ends with a ' matched several lines later
+
+### Filter useful stuff from a config file
+strip() {
+        # We have to build the awk program in bits to allow shell variable substitution
+        local stripper
+        stripper='
+                /^CONFIG_.*/ {'
+
+        [ "$ignoremodules" ] && stripper="$stripper "'gsub( /=m$/ , "=y") ;'  # Convert module items to inline
+
+        stripper="$stripper"'print substr($0, 8); next }        # Strip out the fixed prefix - less work for diff
+
+                /^[#[:space:]]*$/       { next }                # Skip comments without text
+	'
+
+        if [ "$includeunset" ]
+        then stripper="$stripper"'       /^#.*is not set/        { print substr($2, 8) "=unset"; next }                # Retain unset items'
+        else stripper="$stripper"'       /^#.*is not set/        { next }                # Skip unset items'
+        fi
+
+        stripper="$stripper"'
+                /^#.*generated file/    { next }                # Skip boilerplate heading
+                /^#/                    { print ; next }        # Print comments with text
+                { print "Unexpected", $0 > "/dev/stderr" }      # Catchall for cruft
+        '
+
+        gawk "$stripper"
+}
+
+### Filter "end of" comments so we can identify nesting comments
+ended() {
+        gawk -v FIELDWIDTHS="1 1:$width 1:*" '$2~/^# end of/ { gsub( /[[:space:]]*$/ , "", $2) ; print substr($2, 10) ; next }'
+}
+
+### Split side-by-side diff output containing comments
+# into two separate lines (or one if both halves of the line are equal)
+# Remove non-comment lines with no changes
+# Reorder the fields to put the indication first
+# There's probably a better way than using side-by-side...
+split() {
+        gawk -v FIELDWIDTHS="$width 1:1 1:*" '
+        NR<5 && /^#.*Kernel Configuration.*[\\|\/]/     {
+                print "|", $1, $3 ; next
+                }                                               # Leave the header line
+        /^#/ && $2~/ /          { print " ", $1 ; next }        # Matched comments, print once
+        $2~/ /                  { next }                        # Matched settings - ignore
+        $2~/[\\|\/]/ && ($1~/^#/ || $3~/^#/)    {
+                print "-", $1 ; print "+", $3 ; next
+                }                                               # Change involving a comment, do both
+        $2~/[\\|\/]/            { print "|", $1, $3 ; next }    # Changed settings
+        $2~/[>]/                { print "+", $3 ; next }        # Added line, comment or setting
+        $2~/[<]/                { print "-", $1 ; next }        # Removed line, comment or setting
+        { print "What?", $2, $1, $3 > "/dev/stderr" }           # Anything else is an error
+        '
+}
+
+### Parse diff output:
+# Handle initial label comment (describing kernel versions).
+# Use the list of ending with "# end of <foo>";
+# they indicate nesting. so we can count indentation levels.
+# Abbreviate inserts, deletions and changes for a concise report.
+reduce() {
+        gawk -v FIELDWIDTHS="1 1:$width 1:*" -v endedFile="$endsFile" -v colors="$ADD:$REM:$CHG:$NIL" '
+        BEGIN {
+                while( getline < endedFile ) { matched[$0]=0 }  # Build lookup array of nesting comments
+
+                # Set up an array of ANSI colour codes for additions, removals and changes.
+                split(colors, colours, /:/)
+                colours["+"]=colours[1] ; colours["-"]=colours[2] ; colours["|"]=colours[3] ; reset=colours[4]
+                depth=0+0               # Current nesting level of comments; numeric
+                last=depth              # Nesting level of last printed output
+
+                # Initialize stack of nested comments
+                comment[depth]="SPURIOUS"
+                matched[comment[depth]]=0
+        }
+        function indent(n) {
+                return substr("                                                                     ", 1, 4*n)
+        }
+        function debug(what, this        , i) {
+                print what, this, "depth=" depth, "last=" last, "matched=" (this in matched)
+                for(i=0; i<=depth; i++) print i, comment[i]
+        }
+        function dostart(this) {
+                if(comment[depth] in matched) comment[++depth]=this
+                else { comment[depth]=this ; if(last>=depth) last=depth-1 }
+                # debug("Start", this)
+        }
+        function doend(this     , nest) {
+                nest=depth
+                while( nest>1 && comment[nest]!=this) nest--
+                if(comment[nest]==this) depth=nest-1
+                if(depth<last) last=depth
+                # debug("End", this)
+        }
+        function dosetting(type, item) {
+                # if (last!=depth) debug("Stack", item)
+                while(last<depth) { print " ", indent(last++), "#", comment[last] }
+                print type, indent(depth) colours[type], item, reset
+        }
+        function dochange(o, n          , old, new) {
+                split(o, old,  /=/)
+                split(n, new,  /=/)
+                if(old[1]==new[1])  dosetting("|", old[1] "=" old[2] "--->" new[2])
+                else {
+                        dosetting("-", o)
+                        dosetting("+", n)
+                }
+        }
+
+        { gsub( /[[:space:]]*$/ , "", $2) }     # Trim trailing space from first field
+
+        1==NR && /Kernel Configuration/ { print $2, "--->", $3 ; next }         # Handle the header line
+
+        # Comments
+        $2~/^# end of/  { doend(substr($2, 10)) ; next }
+        $2~/^#/         { dostart(substr($2, 3)) ; next }
+
+        # Settings
+        $1=="-"         { dosetting("-", $2) ; next }
+        $1=="+"         { dosetting("+", $2) ; next }
+        $1=="|"         { dochange($2, $3) ; next }
+
+        # Cruft
+        { print "Oops", $0 > "/dev/stderr" }'
+}
+
+### Shell functions
+
+# Create a tempfile, using /run ramdisk if possible
+Tempfile() {
+        local id dir
+        id="$(id -u)"
+
+        if      [ "$id" = "0" ]
+        then
+                dir="${XDG_RUNTIME_DIR:-/run}"
+                [ -d "$dir" ] || dir=""
+                mktemp -p "$dir" "tmp.$ME.XXXXXXXXXX"
+        else    mktemp -p "${XDG_RUNTIME_DIR}" "tmp.$ME.XXXXXXXXXX"
+        fi
+}
+
+# Print message to stderr and exit 1
+Die() {
+        local template
+        template="$1" ; shift
+        printf "$CHG$template\n" "$@" >&2
+        exit 1
+}
+
+### Mainline code
+
+# Handle parameters - flags ask, pretend and verbose will either be null or set to themselves, so "if [ $flag ]" works
+while getopts '?hw:mcu' f
+do
+        case "$f" in
+                c)      colour="always" ;;
+                m)      ignoremodules="true" ;;
+                u)      includeunset="true" ;;
+                w)      width="$OPTARG" ;;
+                *)      doHelp ; exit ;;
+        esac
+done
+shift $(( OPTIND - 1 ))
+
+# Set coloured output if necessary
+if [ -t 1 ] || [ "$colour" = "always" ]
+then
+        ADD="\033[32m"          # Green
+        REM="\033[34m"          # Blue
+        CHG="\033[33m"          # Yellow/brown
+        NIL="\033[0m"           # Back to white
+fi
+
+[ "2" = "$#" ] || Die "Must be exactly two arguments."
+[ -r "$1" ] || Die "File 1 - $1 - must be readable."
+[ -r "$2" ] || Die "File 2 - $2 - must be readable."
+case "$width" in
+        *[!0-9]*)       Die "Width (-w) must be numeric." ;;
+esac
+
+cfgFile1=$(Tempfile)
+cfgFile2=$(Tempfile)
+splitFile=$(Tempfile)
+endsFile=$(Tempfile)
+
+strip < "$1" > "$cfgFile1"
+strip < "$2" > "$cfgFile2"
+
+w="${width:=80}"
+w=$(( w + w +3 ))
+
+diff --expand-tabs --minimal --side-by-side --width="$w" "$cfgFile1" "$cfgFile2" \
+        | split > "$splitFile"
+
+ended < "$splitFile" >"$endsFile"       # Build list of "# end of ..." comments
+reduce < "$splitFile"
+
+rm "$cfgFile1" "$cfgFile2" "$splitFile" "$endsFile"
