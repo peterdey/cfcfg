@@ -1,17 +1,19 @@
 % cfcfg(1) Version 1 | Show changes between two kernel configuration files
 % Paul Gover
+% Jun 2023
 
-SYNOPSIS
-========
+# NAME
+
+cfcfg - Produce a succinct comparison of two kernel config files.
+
+# SYNOPSIS
 
 **cfcfg** \[**-c**] \[**-m**] \[**-w _nnn_**] _oldcondfigfile_ _newconfigfile_
 
-DESCRIPTION
-===========
+# DESCRIPTION
 
-Produce a succinct comparison of two kernel config files,
-each of which MUST be the unmodified .config file from the kernel "make" configurator.
-Changes such as sorting or manual editing will probably cause erroneous and voluminous output.
+Each _configfile_ MUST be the unmodified .config file from the kernel "make" configurator.
+Changes such as sorting or manual editing will cause erroneous and voluminous output.
 **cfcfg** retains contextual information comments such as `Processor options`, `Device drivers`,
 including nested contexts, and indents the output accordingly.
 
@@ -26,33 +28,42 @@ apart from the actual values, which are coloured yellow.
 **cfcfg** omits the colours when output is redirected to a file or pipeline,
 unless overridden by the **-c** option.
 
+If the environment variable `CFGSYMBOLS` identifies a file of pairs
+"SYMBOL=Annotation" then **cfcfg** will append the appropriate annotation
+as a comment to each symbol listed.
+Such a file can be created with the **cfgsymbols** command.
+
 **cfcfg** can also be used to pretty-print a succinct config file extract
 by making one of the comparison config files `/dev/null`.
 
-OPTIONS
-=======
+# OPTIONS
 
 **-c**
 
-: Force output colouring when output to file or pipe.
+:	Force output colouring when output to file or pipe.
 
 **-m**
 
-: Treat module settings (=m) as builtin (=y) before comparison
-This will remove non-functional differences.
+:	Treat module settings (=m) as builtin (=y) before comparison
+	This will remove non-functional differences.
 
 **-u**
 
-: Retain unset variables in the output.
+:	Retain unset variables in the output.
+
+**-a**
+
+:	Retain only annotated lines.
+	This will remove a few implicit symbols that cannot be
+	explicity set from the listing.
 
 **-w _nnn_**
 
-: Width of "diff" columns used internally for the comparison.
-Output lines can be up to twice this length, plus gutters and indentation,
-but usually a lot less.  Default width is 80.
+:	 Width of "diff" columns used internally for the comparison.
+	Output lines can be up to twice this length, plus gutters and indentation,
+	but usually a lot less.  Default width is 80.
 
-NOTES
-=====
+# NOTES
 
 The output is truncated to fit the screen, but the comparison is based on all the text.
 This means that the display of long lines might not reach the differences.
@@ -69,3 +80,16 @@ Uses `diff`, `gawk` and `mktemp`.  It might not work with other `awk` implementa
 In Gentoo, these come from diffutils, gawk and coreutils packages.
 Coded in shell script, tested with `dash` and `bash`,
 and should work with any POSIX compliant shell.
+
+# ENVIRONMENT
+
+**CFGSYMBOLS**
+
+:	The name of the symbol table produced by **cfgsymbols**.
+	It can be relative to the working directory from which **cfcfg** is run,
+	or absolute.  Note that path expansion does not apply, so
+	`CFGSYMBOLS="~/foo"` will not work.
+
+# SEE ALSO
+
+**cfgsymbols(1)**

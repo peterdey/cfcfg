@@ -1,0 +1,91 @@
+#!/bin/sh
+
+### Parse all Kconfig files in a source tree, and extract symbols and their prompts
+
+# Copyright (C) 2023 Paul Gover
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3 of the License,
+# or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+
+###
+# Synopsis:
+#	cfgsymbols <output-file-path> [<kernel-directory>]
+# Produces a file containing lines "symbol=[prompt]";
+# pass the name of the file in the first argument.
+# Symbols may be duplicated, possibly with differing prompts. That's Kconfig for you.
+# This program uses sort -u to tidy up, but may lose the best prompt.
+# A kernel source directory or build directory may be passed as the second argument,
+# otherwise it defaults to /usr/src/linux.
+# If the directory thus determined is a kernel build directory,
+# the source directory is located by following the "source" symbolic link.
+
+me="${0##*/}"
+whence="${0%/*}"
+[ "$whence" ] || whence="$PWD"
+
+# Location of the kernel Makefile fragment to set SUBARCH; also a canary for a valid kernel tree
+archscript="scripts/subarch.include"
+
+### Subroutines and functions
+
+### Use "make" with said fragment to determine the default ARCH
+getArch() {
+# The kernel makefiles use the following construction to get ARCH, defaulting to SUBARCH
+make -f -  << END
+.PHONY: main
+
+include $1/$archscript
+main:
+	@echo \$(SUBARCH)
+END
+}
+
+### Find Kconfig files, and parse them using awk
+buildSymbols() {
+	find "$where" \( -path "$where/scripts" -prune -o \( -path "$where/arch/$ARCH/*" -o \! \( -path "$where/arch/*/*" -prune \) \) \) -type f -name 'Kconfig*' -exec gawk -f "$whence/$me".awk '{}' +
+}
+
+### Remove duplicate definitions - a pipeline
+clean() {
+	sort -u -k 1,1 -t =
+}
+
+### Print message to stderr and exit 1
+Die() {
+        local template
+        template="$1" ; shift
+	# shellcheck disable=SC2059 # Deliberately use the first argument as a template, so Die works just like printf, except we get the newline added and output to stderr
+        printf "$template\n" "$@" >&2
+        exit 1
+}
+
+[ -n "$1" ] || Die 'Syntax: cfgsymbols <output-file-path> [<kernel-directory>]'
+[ -f "$1" ] && [ ! -w "$1" ] && Die '%s must be a writable file.' "$1"
+
+tree="${2:-/usr/src/linux}"
+[ -d "$tree" ] || Die '%s is not a directory' "$tree"
+# Handle case of detached kernel build directory with "source" link pointing to tree
+[ -f "$tree/$archscript" ] || { [ -h "$tree/source" ] && tree="$tree/source" ; }
+[ -f "$tree/$archscript" ] || Die '%s does not contain a kernel source tree' "$tree"
+
+# Expand any symlink, and get the fully-qualified path name
+where=$(realpath "$tree")
+
+[ "$ARCH" ] || ARCH=$(getArch "$where")
+[ -d "$where/arch/$ARCH" ] || Die "ARCH '$ARCH' is not a directory within $where/arch"
+ 
+# Finally do parse the files, sending the output to $CFGSYMBOLS if set, else stdout
+buildSymbols | clean > "$1"

@@ -1,4 +1,5 @@
 #!/bin/sh
+
 # cfcfg - Produce a succinct kernel configuration comparison
 
 # Copyright (C) 2023 Paul Gover
@@ -6,6 +7,20 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3 of the License,
+# or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+
+# shellcheck disable=SC2016 # Building awk input as done here confuses shellcheck
 
 ME="${0##*/}"
 set -e   # Abort on errors - will leave some temp files
@@ -13,13 +28,14 @@ set -e   # Abort on errors - will leave some temp files
 ### Help and documentation:
 doHelp() {
 cat << endHelp
-cfcfg [-c] [-m] [-u] [-w nnn] oldconfigfile newconfigfiile
+cfcfg [-c] [-m] [-u] [-a] [-w nnn] oldconfigfile newconfigfiile
 
 Succinctly list differences between two Linux kernel configurations.
--c      Retain colours when output redirected to file or pipe
--m      Treat modules as built-in, to eliminate non-functional differences
--u      Retain unset items in the comparison
--w nnn  Set width of comparison output passed to diff, default 80
+-c      Colours retained when output redirected to file or pipe
+-m      Modules treated as built-in, to eliminate non-functional differences
+-u      Unset items retained in the comparison
+-a	Annotated items only in the comparison
+-w nnn  Width of comparison output passed to diff, default 80
 
 See man cfcfg for full details
 endHelp
@@ -90,10 +106,38 @@ split() {
 # Use the list of ending with "# end of <foo>";
 # they indicate nesting. so we can count indentation levels.
 # Abbreviate inserts, deletions and changes for a concise report.
+# Take note - the gawk command line continues to the many lines of awk source
 reduce() {
-        gawk -v FIELDWIDTHS="1 1:$width 1:*" -v endedFile="$endsFile" -v colors="$ADD:$REM:$CHG:$NIL" '
+        gawk -v FIELDWIDTHS="1 1:$width 1:*" \
+		-v endedFile="$endsFile" -v symbolFile="$CFGSYMBOLS" \
+		-v colors="$ADD:$REM:$CHG:$NIL" -v onlyannotated="$onlyannotated" \
+'	function cleave(line,	 array, i) {
+		i = index(line, "=")
+		if(0 == i) {
+			array[1] = line
+			array[2] = ""
+		}
+		else {
+			array[1] = substr(line, 1, i-1)
+			array[2] = substr(line, i+1)
+		}
+	}
+
         BEGIN {
-                while( getline < endedFile ) { matched[$0]=0 }  # Build lookup array of nesting comments
+		# Build lookup array of nesting comments
+                while(1 == rc = getline temp < endedFile) { matched[temp]=0 }
+		if(0 == rc) close(endedFile)
+		else { print ERRNO, "reading:", endedFile >"/dev/stderr" ; exit }
+
+		# Read symbol table
+		if("" != symbolFile) {
+			while(1 == rc = getline temp < symbolFile) {
+				cleave(temp, symbol)
+				if("" != symbol[2]) prompt[symbol[1]] = prompt[symbol[1]] " # " symbol[2]
+			}
+			if(0 == rc) close(symbolFile)
+			else { print ERRNO, "reading:", symbolFile >"/dev/stderr" ; exit }
+		}
 
                 # Set up an array of ANSI colour codes for additions, removals and changes.
                 split(colors, colours, /:/)
@@ -124,14 +168,17 @@ reduce() {
                 if(depth<last) last=depth
                 # debug("End", this)
         }
-        function dosetting(type, item) {
+        function dosetting(type, item, name,	text) {
                 # if (last!=depth) debug("Stack", item)
+		if("" == name) { cleave(item, parts) ; name = parts[1] }
+		text=prompt[name]
+		if(onlyannotated && "" == text) return
                 while(last<depth) { print " ", indent(last++), "#", comment[last] }
-                print type, indent(depth) colours[type], item, reset
+                print type, indent(depth) colours[type], item, "\t" reset text
         }
         function dochange(o, n          , old, new) {
-                split(o, old,  /=/)
-                split(n, new,  /=/)
+                cleave(o, old)
+                cleave(n, new)
                 if(old[1]==new[1])  dosetting("|", old[1] "=" old[2] "--->" new[2])
                 else {
                         dosetting("-", o)
@@ -172,10 +219,11 @@ Tempfile() {
         fi
 }
 
-# Print message to stderr and exit 1
+# Print message in red to stderr and exit 1
 Die() {
         local template
         template="$1" ; shift
+	# shellcheck disable=SC2059 # Deliberately use $1 as the template, so Die has similar syntax to printf
         printf "$CHG$template\n" "$@" >&2
         exit 1
 }
@@ -183,12 +231,13 @@ Die() {
 ### Mainline code
 
 # Handle parameters - flags ask, pretend and verbose will either be null or set to themselves, so "if [ $flag ]" works
-while getopts '?hw:mcu' f
+while getopts 'cmuaw:h?' f
 do
         case "$f" in
                 c)      colour="always" ;;
                 m)      ignoremodules="true" ;;
                 u)      includeunset="true" ;;
+		a)	onlyannotated="true" ;;
                 w)      width="$OPTARG" ;;
                 *)      doHelp ; exit ;;
         esac
