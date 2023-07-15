@@ -21,7 +21,7 @@
 cfcfg - Produce a succinct comparison of two kernel config files.
 .SH SYNOPSIS
 .PP
-\f[B]cfcfg\f[R] [\f[B]-c\f[R]] [\f[B]-m\f[R]] [\f[B]-w
+\f[B]cfcfg\f[R] [\f[B]-c\f[R]] [\f[B]-m\f[R]] [\f[B]-a\f[R]] [\f[B]-w
 \f[BI]nnn\f[B]\f[R]] \f[I]oldcondfigfile\f[R] \f[I]newconfigfile\f[R]
 .SH DESCRIPTION
 .PP

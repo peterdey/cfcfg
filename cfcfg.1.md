@@ -8,7 +8,7 @@ cfcfg - Produce a succinct comparison of two kernel config files.
 
 # SYNOPSIS
 
-**cfcfg** \[**-c**] \[**-m**] \[**-w _nnn_**] _oldcondfigfile_ _newconfigfile_
+**cfcfg** \[**-c**] \[**-m**] \[**-a**] \[**-w _nnn_**] _oldcondfigfile_ _newconfigfile_
 
 # DESCRIPTION
 

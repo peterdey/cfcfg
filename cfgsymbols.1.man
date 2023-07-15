@@ -32,12 +32,12 @@ Kconfig files define the prompts and menus used by the Linux kernel
 .PP
 The resulting file contains lines in the form:
 .PP
-\[lq]SYMBOL_NAME=prompt string\[rq]
+SYMBOL_NAME=prompt string
 .PP
 or, if the configuration item has no prompt (that is, it is set
 internally by the kernel configurator):
 .PP
-\[lq]SYMBOL_NAME\[rq]
+SYMBOL_NAME
 .PP
 Note that \f[B]cfgsymbols\f[R] removes the prefix \f[V]CONFIG_\f[R].
 .PP

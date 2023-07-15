@@ -19,12 +19,12 @@ Kconfig files define the prompts and menus used by the Linux kernel
 
 The resulting file contains lines in the form:
 
-| "SYMBOL_NAME=prompt string"
+| SYMBOL_NAME=prompt string
 
 or, if the configuration item has no prompt
 (that is, it is set internally by the kernel configurator):
 
-| "SYMBOL_NAME"
+| SYMBOL_NAME
 
 Note that **cfgsymbols** removes the prefix `CONFIG_`.
 
