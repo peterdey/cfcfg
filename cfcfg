@@ -224,7 +224,7 @@ Die() {
         local template
         template="$1" ; shift
 	# shellcheck disable=SC2059 # Deliberately use $1 as the template, so Die has similar syntax to printf
-        printf "$CHG$template\n" "$@" >&2
+        printf "$CHG$template\n$NIL" "$@" >&2
         exit 1
 }
 
